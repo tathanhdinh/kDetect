@@ -1,0 +1,21 @@
+#!/bin/sed -f
+
+# ==============================================================================
+# Copyright monads (monads@inbox.com) (INPL - INRIA - LORIA).
+#
+# Distributed under the Boost Software License.
+# ==============================================================================
+# Description:
+#   simple filter the output of observation script
+#
+# Arguments: 
+#   raw observed interactions
+#
+# Returns: 
+#   remove human informative lines
+# ==============================================================================
+
+1,4d
+s/^[[:space:]]*//g
+s/[[:space:]]\+/,/g
+$d

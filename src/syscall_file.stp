@@ -1,0 +1,132 @@
+#! /usr/bin/env stap
+
+# Monitor file-related system calls: open, read, write, lseek, close
+# For each system call, the arguments and the results are logged
+
+# probe syscall.open
+# {
+#   printf("%s(%d)(%d) open\n", execname(), pid(), uid())
+# }
+# 
+# 
+# probe kernel.function("*@net/socket.c").call
+# {
+#   printf("%s -> %s\n", thread_indent(1), probefunc())
+# }
+# 
+# 
+# probe kernel.function("*@net/socket.c").return
+# {
+#   printf("%s <- %s\n", thread_indent(-1), probefunc())
+# }
+
+# probe syscall.* 
+# {
+#   if (pid() == target()) {
+#     printf("%s\n", name);
+#   }
+# }
+
+# probe kernel.function("vfs_read")
+# {
+#   if (pid() == target()) {
+#     printf("(%s) %s\n", execname(), $$parms);
+#   }
+# #   exit();
+# }
+
+# probe kernel.function("vfs_read")
+# {
+#   if (pid() == target()) {
+#     printf("read: %s\n", $$parms$);
+#   }
+# }
+
+# probe kernel.function("vfs_write")
+# {
+#   if (pid() == target()) {
+#       printf("vfs_write: %s\n", $$parms$);
+#   }
+# }
+
+# probe syscall.write, syscall.open, syscall.close 
+# probe syscall.*
+# {
+#   if (pid() == target()) {
+#     printf("%s(%s)\n", name, argstr);
+#   }
+# }
+
+probe vfs.read, vfs.write
+{
+  if (pid() == target()) {
+#     printf("%s(%s)\n", name, argstr);
+    printf("%-10s (%s)\n", probefunc(), $$parms$$);
+  }
+}
+
+# probe syscall.open, syscall.write, syscall.close
+# {
+#   if (pid() == target()) {
+# #     printf("%s -> %s(%s)\n", thread_indent(1), name, $$parms$);
+#     printf("%-10s (%s)\n", probefunc(), $$parms$$);
+#   }
+# }
+
+
+# probe kernel.function("do_sys_open").call
+# {
+#   if (pid() == target()) {
+#     printf("%s(%s)\n", probefunc(), $$parms$);
+#   }
+# }
+# 
+# probe kernel.function("do_filp_open").call
+# {
+#   if (pid() == target()) {
+#     printf("%s(%s)\n", probefunc(), $$parms$);
+#   }
+# }
+# 
+# probe kernel.function("do_filp_open").return
+# {
+#   if (pid() == target()) {
+#     printf("%s(%s)\n", probefunc(), $$return);
+#   }
+# }
+# 
+# probe kernel.function("do_sys_open").return
+# {
+#   if (pid() == target()) {
+#     printf("%s(%s)\n", probefunc(), $$return);
+#   }
+# }
+
+# probe syscall.open.return, syscall.write.return, syscall.close.return
+# {
+#   if (pid() == target()) {
+#     printf("%s <- %s(%s)\n", thread_indent(-1), name, $$return);
+#     printf("%s(%s)\n", probefunc(), $$return);
+#   }
+# }
+
+# probe vfs.write, kernel.function("vfs_create")
+# {
+#   if (pid() == target()) {
+#     printf("%s %s\n", probefunc(), $$vars);
+#   }
+# }
+
+# probe kernel.function("vfs_create")
+# {
+#   if (pid() == target()) {
+#     printf("open: %s\n", $$parms$);
+#   }
+# }
+
+# probe kernel.function("vfs_close")
+# {
+#   if (pid() == target()) {
+#     printf("close: %s\n", $$parms$);
+#   }
+# }

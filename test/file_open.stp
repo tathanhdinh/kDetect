@@ -1,0 +1,76 @@
+
+
+function is_root:long (dentry:long) {
+  return (@cast(dentry, "dentry")->d_parent == dentry)
+}
+
+function dentry_name:string(dentry:long)
+{
+        len = @cast(dentry, "dentry")->d_name->len;
+        return kernel_string_n(@cast(dentry, "dentry")->d_name->name, len);
+}
+
+function file_dentry:long (file:long) {
+  return (@defined(@cast(file,"file")->f_path->dentry)
+    ? @cast(file,"file")->f_path->dentry
+    : @cast(file,"file")->f_dentry)
+}
+
+function file_mount:long (file:long) {
+  return (@defined(@cast(file,"file")->f_path->mnt)
+      ? @cast(file,"file")->f_path->mnt
+      : @cast(file,"file")->f_vfsmnt)
+}
+
+function file_path:string(file:long) {
+  root = & @cast(task_current(), "task_struct")->fs->root
+
+  dentry = file_dentry(file)
+  vfsmnt = file_mount(file)
+
+        while (1) {
+                if (dentry == @cast(root, "path")->dentry &&
+                    vfsmnt == @cast(root, "path")->mnt)
+                      break;
+
+                if (dentry == @cast(vfsmnt, "vfsmount")->mnt_root ||
+                    is_root(dentry)) {
+                        /* Global root? */
+                        if (@cast(vfsmnt, "vfsmount")->mnt_parent == vfsmnt)
+                                return sprintf("/%s", name);
+
+                        dentry = @cast(vfsmnt, "vfsmount")->mnt_mountpoint;
+                        vfsmnt = @cast(vfsmnt, "vfsmount")->mnt_parent;
+                        continue;
+                }
+                /* Only prepend if name has something in it */
+                (name=="")
+                  ? name = dentry_name(dentry)
+                  : name = sprintf("%s/%s", dentry_name(dentry), name)
+
+                dentry = @cast(dentry, "dentry")->d_parent;
+        }
+
+        return sprintf("/%s", name);
+}
+
+probe begin {
+  if (argc<1) {
+    printf ("Please specify the UID you would like to track");
+    exit();
+  }
+  printf ("Tracking any files opened by requested uid %d. Type Ctrl-C to quit\n\n", $1)
+}
+
+
+probe file.open = kernel.function("generic_file_open") {
+  file = $filp
+}
+
+
+probe file.open {
+  if (uid() == $1) {
+    printf("open path: %s\n", file_path(file))
+  }
+}
+

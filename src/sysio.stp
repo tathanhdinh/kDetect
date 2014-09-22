@@ -1,0 +1,46 @@
+#! /usr/bin/env stap
+
+# TA Thanh Dinh (INRIA - LORIA)
+
+probe kernel.function("*@fs/*.c").call 
+{
+  if (pid() == target()) {
+    printf("%s -> %s\n", thread_indent(1), probefunc());
+  }
+}
+
+probe kernel.function("*@fs/*.c").return 
+{
+  if (pid() == target()) {
+    printf("%s <- %s\n", thread_indent(-1), probefunc());
+  }
+}
+
+# probe kernel.function("*@kernel/fork.c").call
+# {
+#   if (pid() == target()) {
+#     printf("%s -> %s\n", thread_indent(1), probefunc());
+#   }
+# }
+# 
+# probe kernel.function("*@kernel/fork.c").return
+# {
+#   if (pid() == target()) {
+#     printf("%s <- %s\n", thread_indent(-1), probefunc());
+#   }
+# }
+
+# probe kernel.function("do_fork") {
+#   printf("%d\n", target());
+#   printf("%-25s %-10d 0x%-x\n", execname(), pid(), $clone_flags)
+# }
+
+# probe kprocess.create {
+#   printf("%-25s: %s (%d) created %d\n",
+#          ctime(gettimeofday_s()), execname(), pid(), new_pid)
+# }
+# 
+# probe kprocess.exec {
+#   printf("%-25s: %s (%d) is exec'ing %s\n",
+#          ctime(gettimeofday_s()), execname(), pid(), filename)
+# }

@@ -1,0 +1,112 @@
+#!/usr/bin/env stap 
+#
+# Copyright (C) 2007 Oracle Corp.
+#
+# Get the list of opened file by specified process id
+#
+# GNU General Public License (GPL); either version 2, or (at your option) any
+# later version.
+#
+# Parameter 1: specified process id
+#
+# Usage:
+#  ./opened_file_by_pid.stp -gx 1234
+#
+# Output:
+#  
+#   [111111111111] xxx (1234) -- 35 files opened
+#    ...
+#
+# Note: seems that pipe,socket, proc/* haven't been included. FIX Me!
+
+%{
+#include <linux/file.h>
+%}
+
+global traced_pid
+global task_name
+
+/* get the task name according to process id*/
+function __get_task_name: string (pid:long) %{
+        struct task_struct *p;
+        pid_t pid;
+
+        pid = (pid_t)(long)THIS->pid;
+        
+	rcu_read_lock();
+	p = find_task_by_pid(pid);
+	rcu_read_unlock();
+
+	if (p==NULL)
+		strlcpy(THIS->__retvalue,"Unknown",MAXSTRINGLEN);
+	else  {
+		strlcpy(THIS->__retvalue,p->comm,MAXSTRINGLEN);
+	      }
+        CATCH_DEREF_FAULT();
+%}
+
+/*get the number of opened files according to process id */
+function __get_open_file: long(pid:long) %{
+	
+	struct files_struct *open_files;
+	struct task_struct *p;
+	struct fdtable *fdt;
+	pid_t pid;
+
+	pid = (pid_t)(long)THIS->pid;
+
+	rcu_read_lock();
+	p = find_task_by_pid(pid);
+	rcu_read_unlock();
+
+	if (p==NULL) {
+		THIS->__retvalue= -1;
+	}
+	else {
+		rcu_read_lock();
+		open_files = p? kread(&(p->files)): NULL;
+		fdt = files_fdtable(open_files);
+		if (fdt==NULL) {
+			THIS->__retvalue= -1;
+			}
+		else {int number;
+		      unsigned int fd;
+		      unsigned int max_fds;
+		      max_fds = kread(&(fdt->max_fds));
+		      number = 0;
+		      for (fd=0;fd < max_fds;fd++) {
+			   if(fcheck_files(open_files,fd))
+				number++;
+  	  	           }
+		      THIS->__retvalue = number;
+		     }
+	      rcu_read_unlock();
+	     }
+        CATCH_DEREF_FAULT();
+%}
+
+/*sampling in certain interval  */
+probe timer.ms(5000) {
+	    timestamp = get_cycles();
+	    file_number = __get_open_file(traced_pid);
+	    if (file_number >= 0)
+	      printf("Timestamp[%d] %s (%d) -- Totally %d files opened\n",timestamp,task_name,traced_pid,file_number);
+	  
+}
+
+/* accept one parameter as process id*/
+probe begin {
+	traced_pid = target();
+	task_name = __get_task_name(traced_pid);
+	if (task_name == "Unknown") {
+		printf("No such process!\n")
+		exit();
+	 }
+	else
+		printf("Now scanning the process...\n");
+}
+	
+probe end {
+	delete traced_pid;
+	delete task_name;
+}

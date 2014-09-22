@@ -1,0 +1,255 @@
+#! /usr/bin/env stap 
+
+# ==============================================================================
+# Copyright TA Thanh Dinh (monads@inbox.com) (INPL - INRIA - LORIA).
+#
+# Distributed under the Boost Software License.
+# ==============================================================================
+# Description:
+#   capture syscall related interactions between process and operating system.
+#   support capturing interactions invoked from a group of forked processes.
+#
+# Syscalls captured (this version): 
+#   open, read, write, close, fork
+#
+# Running as:
+#   ./observation.stp -x pid
+# or
+#   ./observation.stp -c program
+#
+# Arguments:
+#   program name or process id
+#
+# Return:
+#   see printed output
+# ==============================================================================
+
+
+global observed_pids;
+global main_pid;
+
+global file_abs_paths;
+global system_space_fds;
+global process_space_fds;
+global begin_file_offsets;
+global end_file_offsets;
+
+
+# ==============================================================================
+# verify if a process is needed to be traced
+# ==============================================================================
+function should_observe(pid)
+{
+  if ([pid] in observed_pids) 
+    return 1
+  else
+    return 0
+}
+
+
+# ==============================================================================
+# print out the observed information
+# ==============================================================================
+function print_out(pid:long, syscall:string)
+{
+  printf("%d,%s,%s,%d,%d,%d,%d\n", pid, syscall, file_abs_paths[pid], 
+                                   process_space_fds[pid], system_space_fds[pid], 
+                                   begin_file_offsets[pid], end_file_offsets[pid]);  
+}
+
+
+# ==============================================================================
+# find absolute file path
+# reference to the code in http://uselessuseofcat.com/static/file_open.stp but 
+# it doesnt work.
+# the d_path function in default dentry.stp doesnt work neither.
+# ==============================================================================
+function find_abs_path:string (file:long) 
+{
+  return sprintf("/%s", reverse_path_walk(@cast(file, "file")->f_path->dentry));
+}
+
+
+# ==============================================================================
+# begin of observation
+# ==============================================================================
+probe begin
+{
+  main_pid = target();
+  
+  /* mark the position of parent process inside observed_pids table */
+  observed_pids[main_pid] = 1; 
+}
+
+
+# ==============================================================================
+# observe process creation by fork, clone, etc
+# ==============================================================================
+probe kprocess.create 
+{
+  if (should_observe(pid()) == 1) {
+    observed_pids[new_pid] = 1;
+  }
+}
+
+
+# ==============================================================================
+# observe process termination
+# ==============================================================================
+probe kprocess.release
+{
+  current_pid = released_pid;
+  if (should_observe(current_pid) == 1) {
+    delete observed_pids[current_pid];
+    delete system_space_fds[current_pid];
+    delete process_space_fds[current_pid];
+    delete file_abs_paths[current_pid];
+    delete begin_file_offsets[current_pid];
+    delete end_file_offsets[current_pid];
+  }
+  
+  if (current_pid == main_pid) exit();
+}
+
+
+# ==============================================================================
+# observe syscall open
+# ==============================================================================
+probe kernel.function("fd_install").call
+{
+  current_pid = pid();
+  if (should_observe(current_pid) == 1) {
+    system_space_fds[current_pid] = $file;
+    process_space_fds[current_pid] = $fd;
+    file_abs_paths[current_pid] = find_abs_path($file);
+  }
+}
+
+probe kernel.function("sys_open").return
+{
+  current_pid = pid();
+  if (should_observe(current_pid) == 1) {
+    if (process_space_fds[current_pid] >= 0) {
+      begin_file_offsets[current_pid] = @cast(system_space_fds[current_pid], "file")->f_pos;
+      end_file_offsets[current_pid] = begin_file_offsets[current_pid];
+    }
+    else {
+      begin_file_offsets[current_pid] = 0;
+      end_file_offsets[current_pid] = 0;
+    }
+        
+    print_out(current_pid, "open");
+  }
+}
+
+
+# ==============================================================================
+# observe syscall close
+# ==============================================================================
+probe kernel.function("sys_close").call
+{ 
+  current_pid = pid();
+  if (should_observe(current_pid) == 1) {
+    process_space_fds[current_pid] = $fd;
+  }
+}
+
+probe kernel.function("filp_close").call
+{
+  current_pid = pid();
+  if (should_observe(current_pid) == 1) {
+    system_space_fds[current_pid] = $filp;
+    file_abs_paths[current_pid] = find_abs_path($filp);
+    begin_file_offsets[current_pid] = $filp->f_pos;
+  }
+}
+
+probe kernel.function("sys_close").return
+{
+  current_pid = pid();
+  if (should_observe(current_pid) == 1) {
+    end_file_offsets[current_pid] = @cast(system_space_fds[current_pid], "file")->f_pos;
+    
+    print_out(current_pid, "close");
+  }
+}
+
+
+# ==============================================================================
+# observe syscall read
+# ==============================================================================
+probe kernel.function("sys_read").call
+{
+  current_pid = pid();
+  if (should_observe(current_pid) == 1) {
+    process_space_fds[current_pid] = $fd;
+  }
+}
+
+probe kernel.function("vfs_read").call
+{
+  current_pid = pid();
+  if (should_observe(current_pid) == 1) {
+    system_space_fds[current_pid] = $file;
+    file_abs_paths[current_pid] = find_abs_path($file);
+    begin_file_offsets[current_pid] = $file->f_pos;
+  }
+}
+
+probe kernel.function("sys_read").return
+{
+  current_pid = pid();
+  if (should_observe(current_pid) == 1) {
+    end_file_offsets[current_pid] = @cast(system_space_fds[current_pid], "file")->f_pos;
+    
+    print_out(current_pid, "read");
+  }
+}
+
+
+# ==============================================================================
+# observe syscall write
+# ==============================================================================
+probe kernel.function("sys_write").call
+{
+  current_pid = pid();
+  if (should_observe(current_pid) == 1) {
+    process_space_fds[current_pid] = $fd;
+  }
+}
+
+probe kernel.function("vfs_write").call
+{
+  current_pid = pid();
+  if (should_observe(current_pid) == 1) {
+    system_space_fds[current_pid] = $file;
+    file_abs_paths[current_pid] = find_abs_path($file);
+    begin_file_offsets[current_pid] = $file->f_pos;
+  }
+}
+
+probe kernel.function("sys_write").return 
+{
+  current_pid = pid();
+  if (should_observe(current_pid) == 1) {
+    end_file_offsets[current_pid] = @cast(system_space_fds[current_pid], "file")->f_pos;
+    
+    print_out(current_pid, "write");
+  }
+}
+
+
+# ==============================================================================
+# end of observation
+# ==============================================================================
+probe end
+{
+  delete observed_pids;
+  delete main_pid;
+
+  delete file_abs_paths;
+  delete system_space_fds;
+  delete process_space_fds;
+  delete begin_file_offsets;
+  delete end_file_offsets;
+}

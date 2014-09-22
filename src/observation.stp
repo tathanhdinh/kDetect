@@ -1,0 +1,217 @@
+#! /usr/bin/env stap
+
+# ==============================================================================
+# Copyright monads (monads@inbox.com) (INPL - INRIA - LORIA).
+#
+# Distributed under the Boost Software License.
+# ==============================================================================
+# Description:
+#   capture syscall related interactions between process and operating system.
+#
+# Syscalls captured (this version): 
+#   open, read, write, close
+#
+# Running as:
+#   ./observation.stp -x pid
+# or
+#   ./observation.stp -c program
+#
+# Arguments:
+#   program name or process id
+#
+# Return:
+#   see printed output
+# ==============================================================================
+
+global pids;
+
+global file_name;
+global process_space_fd;
+global system_space_fd;
+global begin_file_offset;
+global end_file_offset;
+
+
+global file_names;
+
+
+function print_out(syscall_name)
+{
+  if ([process_space_fd] in file_names) {
+    file_name = file_names[process_space_fd];
+  }
+  else {
+    file_name = "unknow";
+  }
+  
+  printf("%7s %62s %7d %12d %7d %7d\n", syscall_name, file_name, 
+    process_space_fd, system_space_fd, begin_file_offset, end_file_offset);
+}
+
+
+################################################################################
+# begin of observation
+################################################################################
+probe begin
+{
+  printf("===========================================================================================================\n");
+  printf("Kernel-space observation of process %d\n", pid());
+  printf("===========================================================================================================\n");
+  printf("%7s %62s %7s %12s %7s %7s\n", "syscall", "path", "pfd", "sfd", "boff", "eoff");
+}
+
+################################################################################
+# syscall open
+################################################################################
+# probe kernel.function("sys_open").call
+# {
+#   if (pid() == target()) {
+#     file_name = $filename;
+#   }
+# }
+
+# probe kernel.function("getname").return
+# {
+#   if (pid() == target()) {
+#     file_name = $return;
+#   }
+# }
+
+probe kernel.function("do_filp_open").call
+{
+  if (pid() == target()) {
+    file_name = kernel_string($pathname);
+  }
+}
+
+probe kernel.function("do_filp_open").return
+{
+  if (pid() == target()) {
+    system_space_fd = $return;
+  }
+}
+
+probe kernel.function("fd_install").call
+{
+  if (pid() == target()) {
+    system_space_fd = $file;
+    process_space_fd = $fd;
+  }
+}
+
+probe kernel.function("sys_open").return
+{
+  if (pid() == target()) {
+    process_space_fd = $return;
+    file_names[process_space_fd] = file_name;
+    
+    if (process_space_fd >= 0) {
+      begin_file_offset = @cast(system_space_fd, "file")->f_pos;
+      end_file_offset = begin_file_offset;
+    }
+    else {
+      begin_file_offset = 0;
+      end_file_offset = 0;
+    }
+    print_out("open");
+    
+    if (process_space_fd < 0) {
+      delete file_names[process_space_fd];
+    }
+  }
+}
+
+
+################################################################################
+# syscall close
+################################################################################
+probe kernel.function("sys_close").call
+{
+  if (pid() == target()) {
+    process_space_fd = $fd;
+    file_name = file_names[$fd];
+  }
+}
+
+probe kernel.function("filp_close").call
+{
+  if (pid() == target()) {
+    system_space_fd = $filp;
+    begin_file_offset = $filp->f_pos;
+  }
+}
+
+probe kernel.function("sys_close").return
+{
+  if (pid() == target()) {
+    end_file_offset = @cast(system_space_fd, "file")->f_pos;
+    print_out("close");
+    
+    if ([process_space_fd] in file_names) 
+      delete file_names[process_space_fd];
+  }
+}
+
+
+################################################################################
+# syscall read
+################################################################################
+probe kernel.function("sys_read").call
+{
+  if (pid() == target()) {
+    process_space_fd = $fd;
+    file_name = file_names[$fd];
+  }
+}
+
+probe kernel.function("vfs_read").call
+{
+  if (pid() == target()) {
+    system_space_fd = $file;
+    begin_file_offset = $file->f_pos;
+  }
+}
+
+probe kernel.function("sys_read").return
+{
+  if (pid() == target()) {
+    end_file_offset = @cast(system_space_fd, "file")->f_pos;
+    print_out("read");
+  }
+}
+
+
+################################################################################
+# syscall write
+################################################################################
+probe kernel.function("sys_write").call
+{
+  if (pid() == target()) {
+    process_space_fd = $fd;
+  }
+}
+
+probe kernel.function("vfs_write").call
+{
+  if (pid() == target()) {
+    system_space_fd = $file;
+    begin_file_offset = $file->f_pos;
+  }
+}
+
+probe kernel.function("sys_write").return
+{
+  if (pid() == target()) {
+    end_file_offset = @cast(system_space_fd, "file")->f_pos;
+    print_out("write");
+  }
+}
+
+
+################################################################################
+# end of observation
+################################################################################
+probe end
+{
+  printf("===========================================================================================================\n");
+}
